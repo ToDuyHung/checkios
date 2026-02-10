@@ -32,6 +32,7 @@ class UmeyamaHelper {
         
         // Estimate Affine Transform
         guard let affineTransform = estimateAffine2D(from: landmarks, to: destPoints) else { return nil }
+        print("Affine Transform: [\(affineTransform.a), \(affineTransform.b), \(affineTransform.c), \(affineTransform.d), \(affineTransform.tx), \(affineTransform.ty)]")
         
         // Apply Transform
         let alignedImage = image.transformed(by: affineTransform)
@@ -226,6 +227,17 @@ func main() {
             return nil
         }
         
+        // DEBUG: Save aligned image
+        let debugPath = currentDir.appendingPathComponent("debug_\(path.lastPathComponent)")
+        let context = CIContext()
+        if let cgImage = context.createCGImage(aligned, from: aligned.extent) {
+            let uiImage = UIImage(cgImage: cgImage)
+            if let data = uiImage.jpegData(compressionQuality: 1.0) {
+                try? data.write(to: debugPath)
+                print("Saved debug image: \(debugPath.path)")
+            }
+        }
+        
         // Create Pixel Buffer
         let size = CGSize(width: 160, height: 160)
         var pixelBuffer: CVPixelBuffer?
@@ -234,8 +246,22 @@ func main() {
                             &pixelBuffer)
         
         guard let buffer = pixelBuffer else { return nil }
-        let context = CIContext()
-        context.render(aligned, to: buffer) // CIImage handles scaling if implicit? No, align output is 160x160.
+        
+        // Disable Color Management: Use "null" color space to prevent sRGB gamma application
+        // This ensures pixel values are copied raw, matching Python's OpenCV/PIL behavior.
+        let context = CIContext(options: [
+            .workingColorSpace: NSNull(), 
+            .outputColorSpace: NSNull()
+        ])
+        context.render(aligned, to: buffer)
+        
+        // DEBUG: Check Pixel Buffer Content
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        if let baseAddress = CVPixelBufferGetBaseAddress(buffer) {
+            let data = Data(bytes: baseAddress, count: 64) // Check first few lines
+            print("PixelBuffer Sample: \(Array(data.prefix(20)))")
+        }
+        CVPixelBufferUnlockBaseAddress(buffer, .readOnly)
         
         // Run Model
         // Identify input name: usually "input" or "image"
@@ -269,7 +295,7 @@ func main() {
                 if let emb = getEmbedding(path: file) {
                     let id = file.deletingPathExtension().lastPathComponent
                     gallery.append(FaceRecord(id: id, embedding: emb))
-                    print("Loaded gallery id: \(id)")
+                    print("Loaded gallery id: \(id) - Vector[:5]: \(emb.prefix(5))")
                 }
             }
         }
@@ -285,6 +311,7 @@ func main() {
              if ["jpg", "png", "jpeg"].contains(fullPath.pathExtension.lowercased()) {
                  print("Processing: \(file)")
                  if let emb = getEmbedding(path: fullPath) {
+                     print("  Valid Vector[:5]: \(emb.prefix(5))")
                      var maxSim: Float = -1.0
                      var bestID = "Unknown"
                      
